@@ -1,3 +1,12 @@
+#include <LiquidCrystal.h>
+
+//--------------------------------------Mapeamento de Hardware----------------------------------//
+#define btSelecionaTensao   (1<<4)
+#define btDiminuiTempo      (1<<5)
+#define btAumentaTempo      (1<<6)
+#define btStartStop         (1<<7)
+//----------------------------------------------------------------------------------------------//
+//--------------------------------------Variaveis Globais---------------------------------------//
 const unsigned int T_1s = 49910;        //Variavel auxiliar para criar base de tempo de 1 segundo (utilizada no Timer 1)
 const unsigned int T_100us = 63935;     //Variavel auxiliar para criar base de tempo de 100us (utilizada nos Timers 3, 4 e 5)
 unsigned char tempoRampa = 20;
@@ -5,7 +14,18 @@ unsigned char tempoDecorrido = 0;
 unsigned char nPulsosFase1 = 0;
 unsigned char nPulsosFase2 = 0;
 unsigned char nPulsosFase3 = 0;
-unsigned char pulsoDeDisparo=82;
+unsigned char pulsoDeDisparo = 82;
+boolean flagBtOnOff = 0x00;
+boolean flagBtSelecionaTensao = 0x00;
+boolean flagBtDiminuiTempo = 0x00;
+boolean flagBtAumentaTempo = 0x00;
+boolean flagBtStartStop = 0x00;
+boolean flagRedeEletrica = 0;
+boolean controleStartStop = 0;
+
+LiquidCrystal lcd(22,23,24,25,26,27);
+
+void atualizaDiplay();
 
 //--------------------------------------Rotinas interrupção externa----------------------------------//
 ISR(INT0_vect){
@@ -23,7 +43,7 @@ ISR(INT2_vect){
 ISR(TIMER1_OVF_vect)
 {
    TCNT1 = T_1s;
-   if(tempoDecorrido == tempoRampa){
+   if(tempoDecorrido >= tempoRampa){
       tempoDecorrido =0;
    }
    pulsoDeDisparo= 82 -(((float)tempoDecorrido/tempoRampa)*82);
@@ -34,9 +54,9 @@ ISR(TIMER3_OVF_vect)
    TCNT3 = T_100us;
    nPulsosFase1++;
    if(nPulsosFase1 <= pulsoDeDisparo){
-      digitalWrite(12,HIGH);
+      digitalWrite(4,HIGH);
    } else if(nPulsosFase1 >pulsoDeDisparo+5){
-      digitalWrite(12,LOW);
+      digitalWrite(4,LOW);
    }
 }  
 ISR(TIMER4_OVF_vect)
@@ -49,12 +69,20 @@ ISR(TIMER5_OVF_vect)
    TCNT5 = T_100us;
    nPulsosFase3++;
 }
+
 //---------------------------------------------------------------------------------------------------//
 
 void setup() {
+  lcd.begin(16,2);
 //-----------------------------------------------------------Configuração de GPIOS---------------------------------------------------------------------//
-  pinMode(12,OUTPUT);
-  digitalWrite(12,HIGH);
+  pinMode(4,OUTPUT);
+  digitalWrite(4,HIGH);
+
+  //Configuração de input´s para botoes da IHM
+  DDRB &= ~btSelecionaTensao;
+  DDRB &= ~btDiminuiTempo;
+  DDRB &= ~btAumentaTempo;
+  DDRB &= ~btStartStop;
   
 //---------------------------------------------------Bloco de config de interruções externas-----------------------------------------------------------//
   /*
@@ -106,11 +134,72 @@ void setup() {
     TCNT5  = T_100us;
     TIMSK5 = 0x00;
 //----------------------------------------------------------------------------------------------------------------------------------//
- Serial.begin(9600);    
- TIMSK1 = 0x01;
+   Serial.begin(9600);    
+   while(1)
+   {
+      //Serial.println(pulsoDeDisparo);
+      atualizaDiplay();
+
+      if(PINB&btSelecionaTensao){
+        flagRedeEletrica = 1;
+      } else if(!(PINB&btSelecionaTensao)){
+        flagRedeEletrica = 0;
+      }
+      
+      if(!(PINB&btDiminuiTempo))   flagBtDiminuiTempo=0x01;
+      if((PINB&btDiminuiTempo)&&flagBtDiminuiTempo){
+          flagBtDiminuiTempo=0x00;
+          if(tempoRampa>=10)
+            tempoRampa--;
+          Serial.println("Pressionou diminui tempo");
+      }
+
+      if(!(PINB&btAumentaTempo))   flagBtAumentaTempo=0x01;
+      if((PINB&btAumentaTempo)&&flagBtAumentaTempo){
+          flagBtAumentaTempo=0x00;
+          if(tempoRampa<=90)
+            tempoRampa++;
+          Serial.println("Pressionou Aumenta tempo");
+      }
+      
+      if(!(PINB&btStartStop))   flagBtStartStop=0x01;
+      if((PINB&btStartStop)&&flagBtStartStop){
+          flagBtStartStop=0x00;
+          if(controleStartStop){
+              //TIMSK1 = 0x01;  // Habilita interrupcao por tempo de estouro do timer 1
+              controleStartStop = 0;
+          } else if(!controleStartStop){
+              controleStartStop = 1;
+          }
+          Serial.println("Pressionou Start Stop");
+      }
+   }
 }
 
-void loop() {
-  delay(1000);
-  Serial.println(pulsoDeDisparo);
+void atualizaDiplay(){
+      static boolean limpa1 = flagRedeEletrica;
+      static boolean limpa2= controleStartStop;
+
+      if(limpa1!=flagRedeEletrica || limpa2!=controleStartStop){
+        lcd.clear();
+      }
+      
+      lcd.setCursor(0,0);
+      lcd.print("ON");
+      lcd.setCursor(0,1);
+      if(!flagRedeEletrica)
+        lcd.print("MONO");
+      else if(flagRedeEletrica)
+        lcd.print("TRI");
+      lcd.setCursor(7,1);
+      lcd.print("TEMPO:");
+      lcd.print(tempoRampa);
+      lcd.setCursor(7,0);
+      if(!controleStartStop)
+        lcd.print("STOP");
+      else if(controleStartStop)
+        lcd.print("START");
+
+      limpa1 = flagRedeEletrica;
+      limpa2 = controleStartStop;
 }
